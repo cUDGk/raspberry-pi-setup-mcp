@@ -1,6 +1,6 @@
 {
   "name": "raspberry-pi-setup-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP stdio server for Raspberry Pi initial setup — OS recommendation, headless boot file generation (wpa_supplicant / userconf / firstrun), rpi-imager CLI integration",
   "type": "module",
   "main": "dist/index.js",

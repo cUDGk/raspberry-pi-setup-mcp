@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { z } from "zod";
 import { OS_CATALOG, recommendOs } from "./os.js";
+import { cloudInitYaml, dietpiTxt, dietpiWifiTxt, listBlockDevices, generateSshKeypair } from "./extras.js";
 
 function textContent(data: unknown) {
   const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
@@ -223,6 +224,8 @@ Actions:
       "generate_wpa_supplicant", "generate_userconf", "generate_firstrun",
       "enable_ssh_instructions", "prepare_boot",
       "hash_password", "check_requirements",
+      "cloud_init_ubuntu", "dietpi_config",
+      "list_block_devices", "generate_ssh_keypair",
     ]).describe("Action"),
     use_case: z.string().optional().describe("recommend_os: 用途 (例: 'プログラミング学習', 'web server', 'レトロゲーム')"),
     experience: z.enum(["beginner", "intermediate", "advanced"]).optional().describe("recommend_os: 経験レベル"),
@@ -255,7 +258,21 @@ Actions:
       username: z.string(),
       password: z.string().optional(),
       password_hash: z.string().optional(),
-    }).optional().describe("prepare_boot: 初期ユーザー"),
+      sudo_nopasswd: z.boolean().optional(),
+    }).optional().describe("prepare_boot / cloud_init_ubuntu: 初期ユーザー"),
+    packages: z.array(z.string()).optional().describe("cloud_init_ubuntu: apt パッケージ一覧"),
+    runcmd: z.array(z.string()).optional().describe("cloud_init_ubuntu: runcmd に追加する shell 行"),
+    dietpi: z.object({
+      password: z.string().optional(),
+      autostart: z.string().optional(),
+      ssh_server: z.boolean().optional(),
+      keyboard_layout: z.string().optional(),
+      headless: z.boolean().optional(),
+    }).optional().describe("dietpi_config: DietPi 固有オプション"),
+    ssh_key_type: z.enum(["ed25519", "rsa", "ecdsa"]).optional(),
+    ssh_key_bits: z.number().int().positive().optional(),
+    ssh_key_passphrase: z.string().optional(),
+    ssh_key_comment: z.string().optional(),
   },
   async (p) => {
     try {
@@ -335,6 +352,54 @@ Actions:
         }
         case "check_requirements":
           return textContent(checkRequirements());
+        case "cloud_init_ubuntu": {
+          if (!p.user) return errContent("cloud_init_ubuntu requires 'user'");
+          let user = { ...p.user };
+          if (!user.password_hash && user.password) {
+            const h = opensslPasswdSha512(user.password);
+            if ("error" in h) return errContent(h.error);
+            user = { username: user.username, password_hash: h.hash, sudo_nopasswd: user.sudo_nopasswd };
+          }
+          const yaml = cloudInitYaml({
+            hostname: p.hostname, timezone: p.timezone, locale: p.locale,
+            user: user as any,
+            ssh_pubkey: p.ssh_pubkey,
+            wifi: p.wifi,
+            packages: p.packages,
+            runcmd: p.runcmd,
+          });
+          return textContent({ filename: "user-data", content: yaml, note: "Place as 'user-data' on the system-boot partition of Ubuntu Server Pi. Pair with empty 'meta-data' file." });
+        }
+        case "dietpi_config": {
+          const txt = dietpiTxt({
+            password: p.dietpi?.password,
+            hostname: p.hostname,
+            timezone: p.timezone,
+            locale: p.locale,
+            keyboard_layout: p.dietpi?.keyboard_layout,
+            headless: p.dietpi?.headless,
+            ssh_server: p.dietpi?.ssh_server,
+            autostart: p.dietpi?.autostart,
+            wifi: p.wifi,
+          });
+          const out: any = { "dietpi.txt": { content: txt } };
+          if (p.wifi) {
+            out["dietpi-wifi.txt"] = { content: dietpiWifiTxt({ ssid: p.wifi.ssid, psk: p.wifi.psk, key_mgmt: p.key_mgmt }) };
+          }
+          return textContent({
+            files: out,
+            note: "Place on the DietPi boot partition. If wifi is set, both dietpi.txt and dietpi-wifi.txt are generated.",
+          });
+        }
+        case "list_block_devices":
+          return textContent(listBlockDevices());
+        case "generate_ssh_keypair":
+          return textContent(generateSshKeypair({
+            comment: p.ssh_key_comment,
+            passphrase: p.ssh_key_passphrase,
+            type: p.ssh_key_type,
+            bits: p.ssh_key_bits,
+          }));
       }
     } catch (err: any) {
       return errContent(`${err?.name ?? "Error"}: ${err?.message ?? String(err)}`);
