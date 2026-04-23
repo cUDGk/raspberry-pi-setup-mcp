@@ -35,6 +35,10 @@ LLM に `ffmpeg -i ...` を書かせないのと同じ理屈で、LLM に `wpa_s
 | `prepare_boot` | `target_dir` に上記を**まとめて書き出す**（SD の boot パーティションを直接指定する想定） |
 | `hash_password` | `password` → `$6$...` SHA-512 crypt ハッシュ |
 | `check_requirements` | openssl / rpi-imager / Node / platform の検出 |
+| `cloud_init_ubuntu` | **Ubuntu Server Pi 用 user-data YAML 生成**。hostname / timezone / locale / user (password は openssl で自動 hash) / `ssh_pubkey` / `wifi` (netplan 形式) / `packages` / `runcmd` |
+| `dietpi_config` | **DietPi 固有の dietpi.txt + dietpi-wifi.txt** を同時生成。locale / keyboard_layout / timezone / `dietpi.headless` / `dietpi.ssh_server` / `dietpi.autostart` 対応 |
+| `list_block_devices` | Windows (PowerShell `Get-Disk`) / macOS (`diskutil`) / Linux (`lsblk -J`) をプラットフォームごとに叩いて JSON 正規化 |
+| `generate_ssh_keypair` | `ssh-keygen` シェルアウトで ed25519 / rsa / ecdsa キーペア生成。`ssh_key_comment` / `ssh_key_passphrase` / `ssh_key_type` / `ssh_key_bits` 対応、SHA256 フィンガープリント付き |
 
 ## 想定フロー
 
@@ -92,6 +96,42 @@ claude mcp add rpi -- node C:/Users/user/Desktop/raspberry-pi-setup-mcp/dist/ind
 ```
 
 `target_dir=E:/` が SD の boot パーティションのマウント先。Windows だとドライブレターが自動で振られる。
+
+**Ubuntu Server Pi のヘッドレス設定** (cloud-init):
+```json
+{"action": "cloud_init_ubuntu",
+ "hostname": "pi-home",
+ "timezone": "Asia/Tokyo",
+ "user": {"username": "pi", "password": "setpasswd", "sudo_nopasswd": true},
+ "wifi": {"ssid": "MyWiFi", "psk": "secret", "country": "JP"},
+ "ssh_pubkey": "ssh-ed25519 AAAA... user@host",
+ "packages": ["docker.io", "git", "vim"],
+ "runcmd": ["usermod -aG docker pi"]}
+```
+→ `user-data` として `system-boot` パーティション直下に配置 (空の `meta-data` も必要)。
+
+**DietPi の初期設定**:
+```json
+{"action": "dietpi_config",
+ "hostname": "mydietpi",
+ "timezone": "Asia/Tokyo",
+ "wifi": {"ssid": "MyWiFi", "psk": "secret", "country": "JP"},
+ "dietpi": {"password": "diet", "headless": true, "ssh_server": true}}
+```
+→ `dietpi.txt` と `dietpi-wifi.txt` を boot パーティションに置く。
+
+**SSH キーペア生成** (ed25519):
+```json
+{"action": "generate_ssh_keypair",
+ "ssh_key_type": "ed25519",
+ "ssh_key_comment": "pi-home@mymachine"}
+```
+→ `public_key` を `generate_userconf` の `ssh_pubkey` や `prepare_boot` にそのまま流し込める。
+
+**利用可能ディスク列挙**:
+```json
+{"action": "list_block_devices"}
+```
 
 ## firstrun.sh を有効化する
 
