@@ -17,6 +17,34 @@ function errContent(msg: string) {
   return { content: [{ type: "text" as const, text: msg }], isError: true };
 }
 
+// Claude Code 等の LLM ツール呼び出しでは object/array 引数が JSON 文字列化されて届く事がある。
+// その場合でも破綻せず受け入れられるようにする。
+function coerceObject<T>(val: unknown): T | undefined {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as T;
+    } catch {}
+    return undefined;
+  }
+  if (typeof val === "object" && !Array.isArray(val)) return val as T;
+  return undefined;
+}
+
+function coerceArray<T>(val: unknown): T[] | undefined {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed as T[];
+    } catch {}
+    return undefined;
+  }
+  if (Array.isArray(val)) return val as T[];
+  return undefined;
+}
+
 function wpaSupplicant(p: {
   ssid: string;
   psk?: string;
@@ -200,7 +228,7 @@ function checkRequirements() {
   return checks;
 }
 
-const server = new McpServer({ name: "raspberry-pi-setup", version: "0.1.0" });
+const server = new McpServer({ name: "raspberry-pi-setup", version: "0.2.1" });
 
 server.tool(
   "rpi_setup",
@@ -234,11 +262,14 @@ Actions:
     country: z.string().optional().describe("wpa_supplicant: ISO 3166-1 alpha-2 国コード (例: 'JP', 'US')"),
     key_mgmt: z.enum(["WPA-PSK", "NONE"]).optional().describe("wpa_supplicant: 認証方式"),
     scan_ssid: z.boolean().optional().describe("wpa_supplicant: 非公開 SSID 対応"),
-    extra_networks: z.array(z.object({
-      ssid: z.string(), psk: z.string().optional(),
-      key_mgmt: z.enum(["WPA-PSK", "NONE"]).optional(),
-      priority: z.number().optional(),
-    })).optional().describe("wpa_supplicant: 複数 SSID を設定"),
+    extra_networks: z.union([
+      z.array(z.object({
+        ssid: z.string(), psk: z.string().optional(),
+        key_mgmt: z.enum(["WPA-PSK", "NONE"]).optional(),
+        priority: z.number().optional(),
+      })),
+      z.string(),
+    ]).optional().describe("wpa_supplicant: 複数 SSID を設定"),
     username: z.string().optional().describe("userconf: username"),
     password: z.string().optional().describe("userconf/hash_password: 平文 (openssl で hash 化)"),
     password_hash: z.string().optional().describe("userconf: crypt(3) hash ($6$... / $y$...)"),
@@ -246,36 +277,56 @@ Actions:
     locale: z.string().optional().describe("firstrun/prepare_boot: locale (例: 'ja_JP.UTF-8')"),
     timezone: z.string().optional().describe("firstrun/prepare_boot: timezone (例: 'Asia/Tokyo')"),
     ssh_pubkey: z.string().optional().describe("firstrun/prepare_boot: SSH 公開鍵 (authorized_keys に追加)"),
-    firstrun_commands: z.array(z.string()).optional().describe("firstrun: 追加で実行する bash コマンド列"),
+    firstrun_commands: z.union([z.array(z.string()), z.string()]).optional().describe("firstrun: 追加で実行する bash コマンド列"),
     target_dir: z.string().optional().describe("prepare_boot: 書き出し先ディレクトリ (SD の boot パーティションを指定)"),
     enable_ssh: z.boolean().optional().describe("prepare_boot: 'ssh' 空ファイルを作る (SSH 有効化)"),
-    wifi: z.object({
-      ssid: z.string(),
-      psk: z.string().optional(),
-      country: z.string(),
-    }).optional().describe("prepare_boot: WiFi 設定"),
-    user: z.object({
-      username: z.string(),
-      password: z.string().optional(),
-      password_hash: z.string().optional(),
-      sudo_nopasswd: z.boolean().optional(),
-    }).optional().describe("prepare_boot / cloud_init_ubuntu: 初期ユーザー"),
-    packages: z.array(z.string()).optional().describe("cloud_init_ubuntu: apt パッケージ一覧"),
-    runcmd: z.array(z.string()).optional().describe("cloud_init_ubuntu: runcmd に追加する shell 行"),
-    dietpi: z.object({
-      password: z.string().optional(),
-      autostart: z.string().optional(),
-      ssh_server: z.boolean().optional(),
-      keyboard_layout: z.string().optional(),
-      headless: z.boolean().optional(),
-    }).optional().describe("dietpi_config: DietPi 固有オプション"),
+    wifi: z.union([
+      z.object({
+        ssid: z.string(),
+        psk: z.string().optional(),
+        country: z.string(),
+      }),
+      z.string(),
+    ]).optional().describe("prepare_boot: WiFi 設定"),
+    user: z.union([
+      z.object({
+        username: z.string(),
+        password: z.string().optional(),
+        password_hash: z.string().optional(),
+        sudo_nopasswd: z.boolean().optional(),
+      }),
+      z.string(),
+    ]).optional().describe("prepare_boot / cloud_init_ubuntu: 初期ユーザー"),
+    packages: z.union([z.array(z.string()), z.string()]).optional().describe("cloud_init_ubuntu: apt パッケージ一覧"),
+    runcmd: z.union([z.array(z.string()), z.string()]).optional().describe("cloud_init_ubuntu: runcmd に追加する shell 行"),
+    dietpi: z.union([
+      z.object({
+        password: z.string().optional(),
+        autostart: z.string().optional(),
+        ssh_server: z.boolean().optional(),
+        keyboard_layout: z.string().optional(),
+        headless: z.boolean().optional(),
+      }),
+      z.string(),
+    ]).optional().describe("dietpi_config: DietPi 固有オプション"),
     ssh_key_type: z.enum(["ed25519", "rsa", "ecdsa"]).optional(),
     ssh_key_bits: z.number().int().positive().optional(),
     ssh_key_passphrase: z.string().optional(),
     ssh_key_comment: z.string().optional(),
   },
-  async (p) => {
+  async (raw) => {
     try {
+      // object/array 引数が JSON 文字列化されて届くケースを吸収する
+      const p = {
+        ...raw,
+        extra_networks: coerceArray<{ ssid: string; psk?: string; key_mgmt?: "WPA-PSK" | "NONE"; priority?: number }>(raw.extra_networks),
+        firstrun_commands: coerceArray<string>(raw.firstrun_commands),
+        wifi: coerceObject<{ ssid: string; psk?: string; country: string }>(raw.wifi),
+        user: coerceObject<{ username: string; password?: string; password_hash?: string; sudo_nopasswd?: boolean }>(raw.user),
+        packages: coerceArray<string>(raw.packages),
+        runcmd: coerceArray<string>(raw.runcmd),
+        dietpi: coerceObject<{ password?: string; autostart?: string; ssh_server?: boolean; keyboard_layout?: string; headless?: boolean }>(raw.dietpi),
+      };
       switch (p.action) {
         case "list_os":
           return textContent({ count: OS_CATALOG.length, os: OS_CATALOG });

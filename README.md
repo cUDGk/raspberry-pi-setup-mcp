@@ -151,6 +151,12 @@ Raspberry Pi OS Bookworm の流儀:
 - **子ども向けの配慮**: `recommend_os` で Lite/Alpine/DietPi は beginner にはスコアを下げる。GUI 付き Pi OS を積極的に推す
 - **`list_block_devices` や `flash_image` は v0.1 では未実装**。rpi-imager は GUI 推奨で、MCP で制御するメリットが薄い為
 
+## v0.2.1 修正
+
+- Claude Code 等の LLM クライアントから MCP ツールを呼ぶ時、object / array 型の引数が JSON 文字列化された状態で届くケースがあり、`wifi` / `user` / `dietpi` / `extra_networks` / `packages` / `runcmd` / `firstrun_commands` を受け取るハンドラで `p.wifi.ssid` 等が `undefined` になって壊れていた
+- zod スキーマを `z.union([<本来>, z.string()])` に緩和し、ハンドラ先頭で `coerceObject` / `coerceArray` により文字列を JSON パースしてから使うようにした
+- 影響するアクション: `prepare_boot`, `generate_wpa_supplicant`, `cloud_init_ubuntu`, `dietpi_config`, `generate_firstrun`
+
 ## Attribution
 
 - [Raspberry Pi OS](https://www.raspberrypi.com/software/)
