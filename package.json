@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "bin": { "raspberry-pi-setup-mcp": "dist/index.js" },
   "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.17" },
   "scripts": { "build": "tsc", "start": "node dist/index.js" },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
