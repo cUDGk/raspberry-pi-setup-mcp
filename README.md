@@ -38,7 +38,7 @@ LLM に `ffmpeg -i ...` を書かせないのと同じ理屈で、LLM に `wpa_s
 | `cloud_init_ubuntu` | **Ubuntu Server Pi 用 user-data YAML 生成**。hostname / timezone / locale / user (password は openssl で自動 hash) / `ssh_pubkey` / `wifi` (netplan 形式) / `packages` / `runcmd` |
 | `dietpi_config` | **DietPi 固有の dietpi.txt + dietpi-wifi.txt** を同時生成。locale / keyboard_layout / timezone / `dietpi.headless` / `dietpi.ssh_server` / `dietpi.autostart` 対応 |
 | `list_block_devices` | Windows (PowerShell `Get-Disk`) / macOS (`diskutil`) / Linux (`lsblk -J`) をプラットフォームごとに叩いて JSON 正規化 |
-| `generate_ssh_keypair` | `node:crypto` を使った in-process ed25519 キーペア生成（シェルアウト不使用）。`ssh_key_comment` / `ssh_key_type` 対応、SHA256 フィンガープリント付き（`ssh_key_bits` は ed25519 固定長のため不使用） |
+| `generate_ssh_keypair` | `node:crypto` を使った in-process ed25519 キーペア生成（シェルアウト不使用）。`ssh_key_comment` / `ssh_key_type` 対応、SHA256 フィンガープリント付き（`ssh_key_bits` を渡すとエラー — ed25519 は固定長のためパラメータ自体が無効） |
 
 ## 想定フロー
 
@@ -132,7 +132,7 @@ claude mcp add rpi -- node /path/to/<install-dir>/dist/index.js
  "ssh_key_comment": "pi-home@mymachine",
  "private_key_path": "C:/Users/me/.ssh/id_pi"}
 ```
-→ 秘密鍵は `private_key_path` に mode 0600 で書き出され、レスポンスには **public key と fingerprint のみ** が含まれる。`publicKey` を `generate_userconf` の `ssh_pubkey` や `prepare_boot` にそのまま流し込める。
+→ 秘密鍵は `private_key_path` に mode 0600 で書き出され、レスポンスには **秘密鍵は含まれず** `publicKey` / `fingerprint` / `privateKeyPath` / `pubKeyPath` / `type` / `mode_protected`（Windows では `warning` も）が返る。`publicKey` を `generate_userconf` の `ssh_pubkey` や `prepare_boot` にそのまま流し込める。
 
 **利用可能ディスク列挙**:
 ```json
